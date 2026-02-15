@@ -1496,7 +1496,8 @@ static void obtain_inhibit_lock(void)
 	dbus_message_unref(message);
 
         if (dbus_error_is_set(&error)) {
-		DBG("BDS: Received error: %s", error.message);
+		warn("Failed to register a suspend inhibitor.  Is selinux blocking? error=%s",
+		     error.message);
                 dbus_error_free(&error);
                 return;
         }
@@ -1610,8 +1611,10 @@ int connect_prepare_for_sleep(void)
                         prepare_for_sleep,
 			NULL,
 			NULL);
-	if (!sleep_id)
+	if (!sleep_id) {
+		warn("Cannot watch for suspend events.  Is selinux blocking this?");
 		return -1;
+	}
 	prepare_sleep_id = sleep_id;
 
 	DBG("BDS: Sleep watch registered");
