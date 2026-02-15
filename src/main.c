@@ -1575,10 +1575,13 @@ int connect_prepare_for_sleep(void)
 	DBusError error;
 	dbus_bool_t login_manager_exists;
 
+	/*
 	DBG("BDS: create new connection for client");
         client_conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, NULL, NULL);
         if (client_conn == NULL)
                 return TRUE;
+	*/
+	client_conn = btd_get_dbus_connection();
 
 	DBG("BDS: look for login manager");
         dbus_error_init(&error);
