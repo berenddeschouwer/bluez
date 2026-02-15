@@ -67,6 +67,9 @@
 struct btd_opts btd_opts;
 static GKeyFile *main_conf;
 static char main_conf_file_path[PATH_MAX];
+static unsigned prepare_sleep_id = 0;
+static unsigned inhibit_lock = -1;
+static DBusConnection *client_conn = NULL;
 
 static const char *supported_options[] = {
 	"Name",
@@ -1443,6 +1446,195 @@ static GOptionEntry options[] = {
 	{ NULL },
 };
 
+static void obtain_inhibit_lock(void)
+{
+        DBusMessage *message, *reply;
+        DBusMessageIter iter;
+	DBusError error;
+	int fd;
+	const char *what = "sleep";
+	const char *who = "bluetooth manager";
+	const char *why = "stopping device discovery";
+	const char *mode = "delay";
+
+	DBG("BDS: obtain_inhibit_lock()");
+
+	DBG("BDS: checking if connected()");
+	if (!client_conn || !dbus_connection_get_is_connected(client_conn))
+		return;
+
+	DBG("BDS: Creating message");
+        message = dbus_message_new_method_call("org.freedesktop.login1",
+					       "/org/freedesktop/login1",
+                                               "org.freedesktop.login1.Manager",
+                                               "Inhibit");
+	if (!message) {
+		DBG("BDS: Message creation failed");
+                dbus_connection_unref(client_conn);
+		return;
+	}
+	DBG("BDS: Message allocated");
+
+	DBG("BDS: Create iterator");
+        dbus_message_iter_init_append(message, &iter);
+	DBG("BDS: Iterator allocated");
+
+	DBG("BDS: Adding strings");
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &what);
+	DBG("BDS: Added 1 string");
+        dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &who);
+	DBG("BDS: Added 2 strings");
+        dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &why);
+	DBG("BDS: Added 3 strings");
+        dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &mode);
+	DBG("BDS: Added 4 strings");
+
+	DBG("BDS: Asking for lock");
+        dbus_error_init(&error);
+        reply = dbus_connection_send_with_reply_and_block(client_conn,
+							  message, -1, &error);
+	dbus_message_unref(message);
+
+        if (dbus_error_is_set(&error)) {
+		DBG("BDS: Received error: %s", error.message);
+                dbus_error_free(&error);
+                return;
+        }
+
+	if (!reply) {
+		DBG("BDS: No response");
+                return;
+        }
+
+	if (dbus_message_iter_init(reply, &iter) == FALSE) {
+		DBG("BDS: Failed to create iterator");
+		dbus_message_unref(reply);
+		return;
+	}
+
+	DBG("BDS: we have an iterator");
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_UNIX_FD) {
+		dbus_message_unref(reply);
+                DBG("BDS: it's not an fd");
+                return;
+        }
+
+        dbus_message_iter_get_basic(&iter, &fd);
+	inhibit_lock = fd;
+
+	dbus_message_unref(reply);
+	DBG("BDS: Obtained inhibit lock: %d", fd);
+}
+
+static void release_inhibit_lock(void)
+{
+	DBG("BDS: release_inhibit_lock()");
+	if (inhibit_lock < 0)
+		return;
+
+	DBG("BDS: Releasing inhibit lock");
+	close(inhibit_lock);
+	inhibit_lock = -1;
+	DBG("BDS: Released inhibit lock");
+}
+
+static gboolean prepare_for_sleep(DBusConnection *conn, DBusMessage *msg,
+				  void *user_data)
+{
+        DBusMessageIter iter;
+	dbus_bool_t entering;
+
+	DBG("BDS: we have a dbus signal");
+
+	if (dbus_message_iter_init(msg, &iter) == FALSE)
+		return TRUE;
+
+	DBG("BDS: we have an iterator");
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BOOLEAN) {
+                DBG("BDS: it's not a boolean");
+                return TRUE;
+        }
+
+        dbus_message_iter_get_basic(&iter, &entering);
+
+	DBG("BDS: PrepareForSleep: %d\n", entering);
+	if (entering) {
+		adapter_suspend_discovery_sleep();
+		release_inhibit_lock();
+	} else {
+		adapter_resume_discovery_sleep();
+		obtain_inhibit_lock();
+	}
+	return TRUE;
+}
+
+int connect_prepare_for_sleep(void)
+{
+	guint sleep_id;
+	DBusError error;
+	dbus_bool_t login_manager_exists;
+
+	DBG("BDS: create new connection for client");
+        client_conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, NULL, NULL);
+        if (client_conn == NULL)
+                return TRUE;
+
+	DBG("BDS: look for login manager");
+        dbus_error_init(&error);
+        login_manager_exists = dbus_bus_name_has_owner(client_conn,
+						       "org.freedesktop.login1",
+						       &error);
+        if (dbus_error_is_set(&error)) {
+		DBG("BDS: no response looking for login manager");
+                dbus_error_free(&error);
+                return TRUE;
+        }
+
+        if (!login_manager_exists) {
+		DBG("BDS: No login manager");
+                return TRUE;
+	}
+
+	DBG("BDS: connect_prepare_for_sleep()");
+	if (!client_conn || !dbus_connection_get_is_connected(client_conn))
+		return -1;
+
+	obtain_inhibit_lock();
+
+	DBG("BDS: registering sleep watch");
+        sleep_id = g_dbus_add_signal_watch(client_conn,
+			"org.freedesktop.login1",
+			"/org/freedesktop/login1",
+			"org.freedesktop.login1.Manager",
+			"PrepareForSleep",
+                        prepare_for_sleep,
+			NULL,
+			NULL);
+	if (!sleep_id)
+		return -1;
+	prepare_sleep_id = sleep_id;
+
+	DBG("BDS: Sleep watch registered");
+	return 0;
+}
+
+void disconnect_prepare_for_sleep(void)
+{
+	DBusConnection *conn = btd_get_dbus_connection();
+
+	DBG("BDS: disconnect_prepare_for_sleep()");
+	if (!conn || !dbus_connection_get_is_connected(conn))
+		return;
+
+	if (!prepare_sleep_id)
+		return;
+
+	DBG("BDS: removing watch()");
+	g_dbus_remove_watch(conn, prepare_sleep_id);
+	prepare_sleep_id = 0;
+	return;
+}
+
 int main(int argc, char *argv[])
 {
 	GOptionContext *context;
@@ -1498,6 +1690,11 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	DBG("BDS: we have a dbus connection");
+	if (connect_prepare_for_sleep() < 0) {
+		warn("Could not connect for sleep");
+	}
+
 	if (btd_opts.experimental)
 		gdbus_flags = G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
 
@@ -1510,6 +1707,8 @@ int main(int argc, char *argv[])
 		error("Adapter handling initialization failed");
 		exit(1);
 	}
+
+	DBG("BDS: we have adapters");
 
 	btd_device_init();
 	btd_agent_init();
@@ -1557,6 +1756,7 @@ int main(int argc, char *argv[])
 	btd_agent_cleanup();
 	btd_device_cleanup();
 
+	disconnect_prepare_for_sleep();
 	adapter_cleanup();
 
 	rfkill_exit();
