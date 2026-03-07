@@ -1569,21 +1569,28 @@ static gboolean prepare_for_sleep(DBusConnection *conn, DBusMessage *msg,
 	return TRUE;
 }
 
-int connect_prepare_for_sleep(void)
+int listen_for_login_manager(void) {
+	client_conn = btd_get_dbus_connection();
+
+	if (!client_conn || !dbus_connection_get_is_connected(client_conn)) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int connect_login_manager(void)
 {
-	guint sleep_id;
 	DBusError error;
 	dbus_bool_t login_manager_exists;
 
-	/*
-	DBG("BDS: create new connection for client");
-        client_conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, NULL, NULL);
-        if (client_conn == NULL)
-                return TRUE;
-	*/
 	client_conn = btd_get_dbus_connection();
 
-	DBG("BDS: look for login manager");
+	if (!client_conn || !dbus_connection_get_is_connected(client_conn)) {
+		return -1;
+	}
+
+	DBG("BDS: dbus connected, look for login manager");
         dbus_error_init(&error);
         login_manager_exists = dbus_bus_name_has_owner(client_conn,
 						       "org.freedesktop.login1",
@@ -1591,19 +1598,25 @@ int connect_prepare_for_sleep(void)
         if (dbus_error_is_set(&error)) {
 		DBG("BDS: no response looking for login manager");
                 dbus_error_free(&error);
-                return TRUE;
+                return -1;
         }
 
         if (!login_manager_exists) {
 		DBG("BDS: No login manager");
-                return TRUE;
+                return -1;
 	}
 
-	DBG("BDS: connect_prepare_for_sleep()");
-	if (!client_conn || !dbus_connection_get_is_connected(client_conn))
-		return -1;
+	DBG("BDS: login manager exists");
+	return 0;
+}
+
+int connect_prepare_for_sleep(void)
+{
+	guint sleep_id;
 
 	obtain_inhibit_lock();
+
+	client_conn = btd_get_dbus_connection();
 
 	DBG("BDS: registering sleep watch");
         sleep_id = g_dbus_add_signal_watch(client_conn,
@@ -1615,13 +1628,92 @@ int connect_prepare_for_sleep(void)
 			NULL,
 			NULL);
 	if (!sleep_id) {
-		warn("Cannot watch for suspend events.  Is selinux blocking this?");
+		warn("Cannot watch for suspend events (selinux rule?)");
 		return -1;
 	}
 	prepare_sleep_id = sleep_id;
 
 	DBG("BDS: Sleep watch registered");
 	return 0;
+}
+
+static DBusHandlerResult login_manager_changed(DBusConnection *client_conn,
+        DBusMessage *message, void *_usr_data)
+{
+
+	const char *name;
+	const char *old_owner;
+	const char *new_owner;
+
+	if (!dbus_message_is_signal(message, "org.freedesktop.DBus",
+				    "NameOwnerChanged")) {
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+	}
+
+	if (!dbus_message_get_args(message, NULL,
+				DBUS_TYPE_STRING, &name,
+		                DBUS_TYPE_STRING, &old_owner,
+				DBUS_TYPE_STRING, &new_owner,
+				DBUS_TYPE_INVALID)) {
+		DBG("BDS: Error getting OwnerChanged args");
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+	}
+
+	if (strcmp(name, "org.freedesktop.login1")) {
+		// Name not lost, just swapped owners
+		DBG("BDS: not interested in dbus: %s", name);
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+	}
+
+	if (!strcmp(new_owner, "")) {
+		// Name not lost, just swapped owners
+		DBG("BDS: not a new owner: %s", name);
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+	}
+
+	if (connect_prepare_for_sleep() < 0) {
+		DBG("BDS: still could not connect to login manager");
+	} else {
+		DBG("BDS: did connect sleep/suspend");
+		dbus_connection_remove_filter(client_conn,
+					      login_manager_changed, NULL);
+	}
+	return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+int connect_login_and_prepare_for_sleep(void)
+{
+	DBusError error;
+
+	/*
+	DBG("BDS: create new connection for client");
+        client_conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, NULL, NULL);
+        if (client_conn == NULL)
+                return TRUE;
+	*/
+	client_conn = btd_get_dbus_connection();
+
+	if (connect_login_manager() < 0) {
+		DBG("BDS: No login manager yet (early boot?)");
+		dbus_bus_add_match(client_conn,
+			"type='signal',\
+			sender='org.freedesktop.DBus',\
+			interface='org.freedesktop.DBus',\
+			member='NameOwnerChanged'",
+			&error);
+
+		if (dbus_error_is_set(&error)) {
+			DBG("BDS: cannot add nameownerchanged");
+			dbus_error_free(&error);
+			return -1;
+	        }
+
+		dbus_connection_add_filter(client_conn,
+					   login_manager_changed, NULL, free);
+		return -1;
+	}
+
+	return connect_prepare_for_sleep();
 }
 
 void disconnect_prepare_for_sleep(void)
@@ -1697,8 +1789,8 @@ int main(int argc, char *argv[])
 	}
 
 	DBG("BDS: we have a dbus connection");
-	if (connect_prepare_for_sleep() < 0) {
-		warn("Could not connect for sleep");
+	if (connect_login_and_prepare_for_sleep() < 0) {
+		warn("BDS: Could not connect for sleep on startup");
 	}
 
 	if (btd_opts.experimental)
