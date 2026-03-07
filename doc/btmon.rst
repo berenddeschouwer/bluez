@@ -84,9 +84,14 @@ OPTIONS
 -T, --date                  Show a time and date information instead of
                             time offset.
 
+-N, --no-time               Suppress the time offset display entirely.
+
 -S, --sco                   Dump SCO traffic in raw hex format.
 
 -A, --a2dp                  Dump A2DP stream traffic in a raw hex format.
+
+-I, --iso                   Dump ISO stream traffic in raw hex format. Required
+                            to see LE Audio isochronous data in the output.
 
 -E IP, --ellisys IP         Send Ellisys HCI Injection.
 
@@ -250,23 +255,26 @@ completes and the result status.
 
 **ACL Data** shows data plane traffic with handle and protocol decoding::
 
-    < ACL Data TX: Handle 2048 [1.. flags 0x00 dlen 16  #493 [hci0] 12:36:18.977915
-    │              │              │            │          │    │       │
-    │              │              │            │          │    │       └─ Timestamp
-    │              │              │            │          │    └─ Controller
-    │              │              │            │          └─ Frame number
-    │              │              │            └─ Data length
-    │              │              └─ Fragment info / flags
-    │              └─ Connection handle
-    └─ Direction: TX = outgoing, RX = incoming
+    < LE-ACL: Handle 2048 [66:B0:26:F1:D3:BC] [1/6] flags 0x00 dlen 16  #493 [hci0] 12:36:18.977915
+    │   │            │     │                   │          │         │    │    │     │
+    │   │            │     │                   │          │         │    │    │     └─ Timestamp
+    │   │            │     │                   │          │         │    │    └─ Controller
+    │   │            │     │                   │          │         │    └─ Frame number
+    │   │            │     │                   │          │         └─ Data length
+    │   │            │     │                   │          └─ flags
+    │   │            │     │                   └─ Buffer tracking (optional)
+    │   │            │     └─ Peer address (optional)
+    │   │            └─ Handle number
+    │   └─ Connection-type-aware label (e.g. BR-ACL, LE-ACL, BR-SCO, LE-ISO)
+    └─ Direction marker: '<' = host->controller (TX), '>' = controller->host (RX)
 
 ACL data is automatically decoded into higher-layer protocols::
 
-    < ACL Data TX: Handle 2048 [2/6] flags 0x00 dlen 7  #494 [hci0] 12:36:18.978488
+    < LE-ACL: Handle 2048 [2/6] flags 0x00 dlen 7  #494 [hci0] 12:36:18.978488
           ATT: Exchange MTU Request (0x02) len 2
             Client RX MTU: 517
 
-    > ACL Data RX: Handle 2048 flags 0x02 dlen 11       #497 [hci0] 12:36:19.000048
+    > LE-ACL: Handle 2048 flags 0x02 dlen 11       #497 [hci0] 12:36:19.000048
           SMP: Pairing Request (0x01) len 6
             IO capability: NoInputNoOutput (0x03)
             OOB data: Authentication data not present (0x00)
@@ -430,12 +438,47 @@ frame. The indentation level indicates the protocol layer:
 
 Example of protocol layering in ACL data::
 
-    > ACL Data RX: Handle 2048 flags 0x02 dlen 11       #497 [hci0] 12:36:19.000048
+    > ACL: Handle 2048 flags 0x02 dlen 11       #497 [hci0] 12:36:19.000048
           SMP: Pairing Request (0x01) len 6                          ← L2CAP/SMP layer
             IO capability: NoInputNoOutput (0x03)                    ← SMP fields
             OOB data: Authentication data not present (0x00)
             Authentication requirement: Bonding, MITM, SC (0x2d)
             Max encryption key size: 16
+
+Timestamp Notes
+---------------
+
+When reading btsnoop files with ``-t`` or ``-T``, timestamps reflect the
+wall-clock time recorded in the btsnoop file. The precision depends on
+the source:
+
+- **Live capture** (``btmon`` monitor channel): Microsecond precision
+  from the kernel.
+- **btsnoop files**: The btsnoop format stores timestamps as
+  microseconds since epoch, so full microsecond precision is
+  preserved. Trailing zeros in the display (e.g., ``14:38:46.589000``)
+  indicate the original capture source had millisecond granularity.
+
+The default timestamp mode shows seconds elapsed since the first
+packet in the trace, which is useful for measuring intervals between
+events without needing to know the absolute time.
+
+Frame Numbers vs Line Numbers
+-----------------------------
+
+btmon assigns sequential **frame numbers** (``#N``) to HCI packets.
+These are stable identifiers for specific packets regardless of output
+formatting. However, when processing btmon text output with tools like
+``grep`` or ``sed``, the relevant unit is **line numbers** in the output
+file. The two are unrelated:
+
+- A single frame may produce many output lines (header + decoded
+  fields).
+- Frame numbers only apply to HCI traffic (``<`` and ``>``). MGMT
+  (``@``) and system notes (``=``) do not have frame numbers.
+- When referencing specific packets, prefer frame numbers (``#487``)
+  over line numbers, as frame numbers are stable across different
+  terminal widths and formatting options.
 
 Practical Reading Guide
 -----------------------
@@ -480,9 +523,9 @@ MGMT Command Complete event back to bluetoothd.
             Peer address: AA:BB:CC:DD:EE:FF (OUI Company)
     @ MGMT Event: Device Connec.. (0x000b) plen 13  {0x0001} [hci0] 12:36:18.974319
     = bluetoothd: src/adapter.c:connected_callback() hci0 devic..   12:36:18.975307
-    < ACL Data TX: Handle 2048 [1.. flags 0x00 dlen 16  #493 [hci0] 12:36:18.977915
+    < ACL: Handle 2048 [1.. flags 0x00 dlen 16  #493 [hci0] 12:36:18.977915
           LE L2CAP: Connection Parameter Update Request (0x12) ident 1 len 8
-    < ACL Data TX: Handle 2048 [2/6] flags 0x00 dlen 7  #494 [hci0] 12:36:18.978488
+    < ACL: Handle 2048 [2/6] flags 0x00 dlen 7  #494 [hci0] 12:36:18.978488
           ATT: Exchange MTU Request (0x02) len 2
             Client RX MTU: 517
 
@@ -490,6 +533,184 @@ Read this as: The controller reported a new LE connection (HCI event).
 The kernel forwarded this as a MGMT Device Connected event. bluetoothd
 logged its ``connected_callback()``. Then data exchange began -- an L2CAP
 parameter update and ATT MTU negotiation over the new ACL connection.
+
+CONNECTION TRACKING
+===================
+
+HCI uses **connection handles** (16-bit integers) to identify individual
+connections. Understanding how handles map to devices is essential for
+reading traces.
+
+Handle Types
+------------
+
+Different connection types use different handle ranges, but these ranges
+are controller-specific and not standardized. The connection type can be
+determined by looking at the event that created the handle:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 25 60
+
+   * - Type
+     - Creation Event
+     - Description
+   * - BR/EDR ACL
+     - Connection Complete
+     - Classic Bluetooth data connection
+   * - LE ACL
+     - LE (Enhanced) Connection Complete
+     - Low Energy data connection
+   * - CIS
+     - LE CIS Established
+     - Connected Isochronous Stream (LE Audio)
+   * - BIS
+     - LE BIG Complete
+     - Broadcast Isochronous Stream (LE Audio)
+   * - SCO/eSCO
+     - Synchronous Connection Complete
+     - Voice/audio synchronous connection (classic)
+
+A single device may have multiple handles simultaneously. For example,
+an LE Audio device will have an LE ACL handle for control traffic and
+one or more CIS handles for audio streams. The ``LE CIS Established``
+event includes the ACL connection handle that the CIS is associated
+with.
+
+Controller Buffer Tracking
+--------------------------
+
+Buffer tracking may show a indicator in square brackets::
+
+    < ACL: Handle 2048 [1/6] flags 0x00 dlen 16
+
+The ``[1/6]`` means this is buffer slot 1 of 6 available controller
+ACL buffers. This reflects the host-side HCI flow control: the host
+tracks how many buffers the controller has available and shows the
+current usage. When the controller sends ``Number of Completed Packets``
+events, buffers are freed and the count decreases.
+
+HCI ERROR AND DISCONNECT REASON CODES
+======================================
+
+HCI status and disconnect reason codes use the same code space. These
+appear in ``Status:`` and ``Reason:`` fields throughout the trace.
+btmon decodes them automatically, but the hex values are useful for
+searching and filtering.
+
+Common Disconnect Reasons
+-------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 8 40 52
+
+   * - Code
+     - Name
+     - Diagnostic Meaning
+   * - 0x05
+     - Authentication Failure
+     - Pairing or encryption setup failed. Key may be
+       stale or devices have mismatched security databases.
+   * - 0x08
+     - Connection Timeout
+     - The supervision timer expired. The remote device
+       moved out of range or stopped responding. This is
+       an RF link loss.
+   * - 0x13
+     - Remote User Terminated Connection
+     - The remote device intentionally disconnected.
+       This is the normal graceful disconnect.
+   * - 0x14
+     - Remote Device Terminated due to Low Resources
+     - The remote device ran out of resources (memory,
+       connection slots).
+   * - 0x15
+     - Remote Device Terminated due to Power Off
+     - The remote device is powering down.
+   * - 0x16
+     - Connection Terminated By Local Host
+     - The local BlueZ stack intentionally disconnected.
+       Normal when bluetoothd initiates disconnect.
+   * - 0x1f
+     - Unspecified Error
+     - Generic error. Often indicates a firmware issue.
+   * - 0x22
+     - LMP/LL Response Timeout
+     - Link layer procedure timed out. The remote device
+       stopped responding to LL control PDUs.
+   * - 0x28
+     - Instant Passed
+     - A timing-critical operation missed its deadline.
+       Often seen with connection parameter updates.
+   * - 0x2f
+     - Insufficient Security
+     - The required security level (encryption, MITM
+       protection) was not met.
+   * - 0x3b
+     - Unacceptable Connection Parameters
+     - The remote rejected a connection parameter update.
+   * - 0x3d
+     - Connection Terminated due to MIC Failure
+     - Encryption integrity check failed. Possible key
+       mismatch or corruption.
+   * - 0x3e
+     - Connection Failed to be Established
+     - Connection attempt failed entirely (e.g., the
+       remote device did not respond to connection
+       requests).
+   * - 0x3f
+     - MAC Connection Failed
+     - MAC-level connection failure.
+   * - 0x44
+     - Operation Cancelled by Host
+     - The host cancelled the operation before it
+       completed.
+
+Full Error Code Table
+---------------------
+
+The complete set of HCI error codes (0x00-0x45) is defined in the
+Bluetooth Core Specification, Volume 1, Part F. btmon decodes all
+of them automatically in ``Status:`` and ``Reason:`` fields. The
+source mapping is in ``monitor/packet.c`` (``error2str_table``).
+
+ANALYZE MODE
+============
+
+The ``-a`` (``--analyze``) option reads a btsnoop file and produces a
+statistical summary instead of the full decoded trace.
+
+Usage
+-----
+
+.. code-block::
+
+   $ btmon -a hcidump.log
+
+Output Contents
+---------------
+
+Analyze mode reports, for each controller found in the trace:
+
+- **Packet counts**: Total HCI packets broken down by type (commands,
+  events, ACL, SCO, ISO, vendor diagnostics, system notes, user
+  logs, control messages).
+
+- **Per-connection statistics**: For each connection handle found:
+
+  - Connection type (BR-ACL, LE-ACL, BR-SCO, BR-ESCO, LE-ISO)
+  - Device address
+  - TX and RX packet counts and completion counts
+  - Latency statistics (min, max, median) in milliseconds
+  - Packet size statistics (min, max, average) in octets
+  - Throughput estimate in Kb/s
+
+- **Per-channel statistics**: For each L2CAP channel within a
+  connection, the same packet/latency/size statistics.
+
+- **Latency plots**: If ``gnuplot`` is installed, ASCII-art latency
+  distribution plots are rendered in the terminal.
 
 EXAMPLES
 ========
@@ -522,6 +743,81 @@ Open the trace file with full date and time
 
    $ btmon -T -r hcidump.log
 
+AUTOMATED TRACE ANALYSIS
+=========================
+
+This section provides guidance for analyzing btmon traces
+programmatically or with AI assistance.
+
+Recommended Workflow
+--------------------
+
+1. **Get an overview**: Start with ``btmon -a <file>`` to see packet
+   counts, connection handles, device addresses, and traffic volumes.
+
+2. **Decode with timestamps**: Use ``btmon -t -r <file> > output.txt``
+   to produce a text file with wall-clock timestamps for analysis.
+
+3. **Identify connections**: Search for connection establishment events
+   to build a handle-to-address mapping::
+
+       grep -n "Connection Complete\|Enhanced Connection Complete\|CIS Established" output.txt
+
+4. **Track disconnections**: Search for disconnect events and their
+   reasons::
+
+       grep -n "Disconnect Complete" output.txt
+
+   Then examine the lines following each match for the ``Reason:``
+   field.
+
+5. **Identify LE Audio**: Search for ASCS and CIS activity::
+
+       grep -n "ASE Control Point\|CIG Parameters\|Create Connected Isochronous\|CIS Established\|Setup ISO Data Path" output.txt
+
+6. **Check for errors**: Search for non-success status codes::
+
+       grep -n "Status:" output.txt | grep -v "Success"
+
+Key Patterns for Connection Lifecycle
+-------------------------------------
+
+A complete connection lifecycle for an LE ACL connection follows this
+pattern in the trace:
+
+1. ``LE Enhanced Connection Complete`` -- connection established,
+   note the Handle and Peer address
+2. ``LE Connection Update Complete`` -- connection parameters changed
+   (may occur zero or more times)
+3. ``Encryption Change`` -- link encrypted (may show encryption
+   algorithm)
+4. ACL Data with ATT/SMP/L2CAP -- service discovery and data exchange
+5. ``Disconnect Complete`` -- connection ended, check Reason field
+
+For LE Audio connections, additional steps appear between 3 and 5:
+
+- ATT operations on PACS/ASCS characteristics (codec negotiation)
+- ``LE Set CIG Parameters`` command and response
+- ``LE Create CIS`` command
+- ``LE CIS Established`` event (note the CIS handle)
+- ``LE Setup ISO Data Path`` command
+- ISO Data TX/RX (audio streaming)
+- ``Disconnect Complete`` on CIS handle (stream ended)
+- ``LE Remove CIG`` (group removed)
+
+Vendor-Specific Events
+----------------------
+
+Vendor-specific HCI events (event code 0xFF) contain
+controller-manufacturer diagnostic data. btmon decodes some vendor
+events for known manufacturers (Intel, Broadcom, etc.) but many
+sub-events show as ``Unknown`` with raw hex data. These are expected
+and generally not actionable without vendor documentation.
+
+Intel controllers emit extended telemetry events (subevent 0x8780)
+that include connection quality metrics, error counters, and firmware
+state. Partial decoding is available in ``monitor/intel.c``.
+
 RESOURCES
 =========
 
@@ -531,3 +827,8 @@ REPORTING BUGS
 ==============
 
 linux-bluetooth@vger.kernel.org
+
+SEE ALSO
+========
+
+btsnoop(7)

@@ -2373,7 +2373,7 @@ static void cmd_set_flags(int argc, char **argv)
 static uint8_t *str2bytearray(char *arg, uint8_t *val, long *val_len)
 {
 	char *entry;
-	unsigned int i;
+	long i;
 
 	for (i = 0; (entry = strsep(&arg, " \t")) != NULL; i++) {
 		long v;
@@ -2389,7 +2389,7 @@ static uint8_t *str2bytearray(char *arg, uint8_t *val, long *val_len)
 
 		v = strtol(entry, &endptr, 0);
 		if (!endptr || *endptr != '\0' || v > UINT8_MAX) {
-			bt_shell_printf("Invalid value at index %d\n", i);
+			bt_shell_printf("Invalid value at index %ld\n", i);
 			return NULL;
 		}
 
@@ -3262,7 +3262,7 @@ static const struct option pair_options[] = {
 static void cmd_pair(int argc, char **argv)
 {
 	struct mgmt_cp_pair_device cp;
-	uint8_t cap = 0x01;
+	long cap = 0x01;
 	uint8_t type = BDADDR_BREDR;
 	char addr[18];
 	int opt;
@@ -3271,9 +3271,22 @@ static void cmd_pair(int argc, char **argv)
 	while ((opt = getopt_long(argc, argv, "+c:t:h", pair_options,
 								NULL)) != -1) {
 		switch (opt) {
-		case 'c':
-			cap = strtol(optarg, NULL, 0);
-			break;
+		case 'c': {
+			char *endptr;
+
+			cap = mgmt_parse_io_capability(optarg);
+			if (cap != MGMT_IO_CAPABILITY_INVALID)
+				break;
+
+			errno = 0;
+			cap = strtol(optarg, &endptr, 0);
+			if (!errno && cap >= 0 && cap <= UINT8_MAX
+							&& *endptr == '\0')
+				break;
+
+			bt_shell_printf("Invalid argument %s\n", argv[1]);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
 		case 't':
 			type = strtol(optarg, NULL, 0);
 			break;
@@ -4226,14 +4239,25 @@ static void io_cap_rsp(uint8_t status, uint16_t len, const void *param,
 static void cmd_io_cap(int argc, char **argv)
 {
 	struct mgmt_cp_set_io_capability cp;
-	uint8_t cap;
+	long cap;
 	uint16_t index;
 
 	index = mgmt_index;
 	if (index == MGMT_INDEX_NONE)
 		index = 0;
 
-	cap = strtol(argv[1], NULL, 0);
+	cap = mgmt_parse_io_capability(argv[1]);
+	if (cap == MGMT_IO_CAPABILITY_INVALID) {
+		char *endptr;
+
+		errno = 0;
+		cap = strtol(argv[1], &endptr, 0);
+		if (errno || (cap < 0) || (cap > UINT8_MAX) || *endptr) {
+			bt_shell_printf("Invalid argument %s\n", argv[1]);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
+	}
+
 	memset(&cp, 0, sizeof(cp));
 	cp.io_capability = cap;
 
@@ -6149,7 +6173,8 @@ static const struct bt_shell_menu mgmt_menu = {
 	{ "conn-info",		"[-t type] <remote address>",
 		cmd_conn_info,		"Get connection information"	},
 	{ "io-cap",		"<cap>",
-		cmd_io_cap,		"Set IO Capability"		},
+		cmd_io_cap,		"Set IO Capability",
+		mgmt_iocap_generator					},
 	{ "scan-params",	"<interval> <window>",
 		cmd_scan_params,	"Set Scan Parameters"		},
 	{ "get-clock",		"[address]",

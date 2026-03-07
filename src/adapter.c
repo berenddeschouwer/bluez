@@ -42,7 +42,6 @@
 #include "log.h"
 #include "textfile.h"
 
-#include "src/shared/mgmt.h"
 #include "src/shared/util.h"
 #include "src/shared/queue.h"
 #include "src/shared/att.h"
@@ -3806,7 +3805,7 @@ static void device_connect(struct btd_adapter *adapter, const bdaddr_t *dst,
 				BT_IO_OPT_SOURCE_TYPE, adapter->bdaddr_type,
 				BT_IO_OPT_DEST_BDADDR, dst,
 				BT_IO_OPT_DEST_TYPE, dst_type,
-				BT_IO_OPT_CID, ATT_CID,
+				BT_IO_OPT_CID, BT_ATT_CID,
 				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 				BT_IO_OPT_INVALID);
 
@@ -8586,7 +8585,8 @@ static void pair_device_complete(uint8_t status, uint16_t length,
 }
 
 int adapter_create_bonding(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
-					uint8_t addr_type, uint8_t io_cap)
+					uint8_t addr_type,
+					enum mgmt_io_capability io_cap)
 {
 	suspend_discovery(adapter);
 
@@ -8595,7 +8595,8 @@ int adapter_create_bonding(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
 
 /* Starts a new bonding attempt in a fresh new bonding_req or a retried one. */
 int adapter_bonding_attempt(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
-					uint8_t addr_type, uint8_t io_cap)
+						uint8_t addr_type,
+						enum mgmt_io_capability io_cap)
 {
 	struct mgmt_cp_pair_device cp;
 	char addr[18];
@@ -9189,12 +9190,13 @@ static void new_conn_param(uint16_t index, uint16_t length,
 					ev->latency, ev->timeout);
 }
 
-int adapter_set_io_capability(struct btd_adapter *adapter, uint8_t io_cap)
+int adapter_set_io_capability(struct btd_adapter *adapter,
+						enum mgmt_io_capability io_cap)
 {
 	struct mgmt_cp_set_io_capability cp;
 
 	if (!btd_opts.pairable) {
-		if (io_cap == IO_CAPABILITY_INVALID) {
+		if (io_cap == MGMT_IO_CAPABILITY_INVALID) {
 			if (adapter->current_settings & MGMT_SETTING_BONDABLE)
 				set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x00);
 
@@ -9203,8 +9205,8 @@ int adapter_set_io_capability(struct btd_adapter *adapter, uint8_t io_cap)
 
 		if (!(adapter->current_settings & MGMT_SETTING_BONDABLE))
 			set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x01);
-	} else if (io_cap == IO_CAPABILITY_INVALID)
-		io_cap = IO_CAPABILITY_NOINPUTNOOUTPUT;
+	} else if (io_cap == MGMT_IO_CAPABILITY_INVALID)
+		io_cap = MGMT_IO_CAPABILITY_NOINPUTNOOUTPUT;
 
 	memset(&cp, 0, sizeof(cp));
 	cp.io_capability = io_cap;
@@ -9437,7 +9439,7 @@ static int adapter_register(struct btd_adapter *adapter)
 
 	agent = agent_get(NULL);
 	if (agent) {
-		uint8_t io_cap = agent_get_io_capability(agent);
+		enum mgmt_io_capability io_cap = agent_get_io_capability(agent);
 		adapter_set_io_capability(adapter, io_cap);
 		agent_unref(agent);
 	}
