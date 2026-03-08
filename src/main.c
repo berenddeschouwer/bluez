@@ -1855,6 +1855,7 @@ int main(int argc, char *argv[])
 	btd_device_cleanup();
 
 	disconnect_prepare_for_sleep();
+	adapter_suspend_discovery_sleep();
 	adapter_cleanup();
 
 	rfkill_exit();
