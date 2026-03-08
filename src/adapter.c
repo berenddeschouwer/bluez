@@ -288,7 +288,7 @@ struct btd_adapter {
 	bool filtered_discovery;	/* we are doing filtered discovery */
 	bool no_scan_restart_delay;	/* when this flag is set, restart scan
 					 * without delay */
-	bool discovering_before_sleep;	/* discovering before sleep for resume */
+	bool discovering_before_sleep;	/* was discovery on before suspend? */
 	uint8_t discovery_type;		/* current active discovery type */
 	uint8_t discovery_enable;	/* discovery enabled/disabled */
 	bool discovery_suspended;	/* discovery has been suspended */
@@ -2089,13 +2089,14 @@ void adapter_resume_discovery_sleep(void)
 	GList *list;
 
 	DBG("");
-	DBG("BDS: adapter_resume_discovery_sleep");
+	DBG("BDS: %s(): start", __func__);
 
 	for (list = g_list_first(adapter_list); list;
 						list = g_list_next(list)) {
 		struct btd_adapter *adapter = list->data;
 
-		warn("BDS: adapter %s was discovering: %d", adapter->name, adapter->discovering_before_sleep);
+		warn("BDS: adapter %s was discovering: %d",
+		     adapter->name, adapter->discovering_before_sleep);
 		if (adapter->discovering_before_sleep)
 			resume_discovery(adapter);
 		adapter->discovering_before_sleep = false;
@@ -2108,14 +2109,15 @@ void adapter_suspend_discovery_sleep(void)
 	bool was_discovering;
 
 	DBG("");
-	DBG("BDS: adapter_suspend_discovery_sleep");
+	DBG("BDS: %s: start", __func__);
 
 	for (list = g_list_first(adapter_list); list;
 						list = g_list_next(list)) {
 		struct btd_adapter *adapter = list->data;
 
 		was_discovering = (adapter->discovery_list);
-		warn("BDS: adapter %s was discovering: %d", adapter->name, was_discovering);
+		warn("BDS: adapter %s was discovering: %d",
+		     adapter->name, was_discovering);
 		suspend_discovery(adapter);
 		adapter->discovering_before_sleep = was_discovering;
 	}
