@@ -1457,39 +1457,23 @@ static void obtain_inhibit_lock(void)
 	const char *why = "stopping device discovery";
 	const char *mode = "delay";
 
-	DBG("BDS: %s()", __func__);
-
-	DBG("BDS: checking if connected()");
 	if (!client_conn || !dbus_connection_get_is_connected(client_conn))
 		return;
 
-	DBG("BDS: Creating message");
 	message = dbus_message_new_method_call("org.freedesktop.login1",
 					       "/org/freedesktop/login1",
 					       "org.freedesktop.login1.Manager",
 					       "Inhibit");
 	if (!message) {
-		DBG("BDS: Message creation failed");
 		dbus_connection_unref(client_conn);
 		return;
 	}
-	DBG("BDS: Message allocated");
 
-	DBG("BDS: Create iterator");
 	dbus_message_iter_init_append(message, &iter);
-	DBG("BDS: Iterator allocated");
-
-	DBG("BDS: Adding strings");
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &what);
-	DBG("BDS: Added 1 string");
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &who);
-	DBG("BDS: Added 2 strings");
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &why);
-	DBG("BDS: Added 3 strings");
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &mode);
-	DBG("BDS: Added 4 strings");
-
-	DBG("BDS: Asking for lock");
 	dbus_error_init(&error);
 	reply = dbus_connection_send_with_reply_and_block(client_conn,
 							  message, -1, &error);
@@ -1502,21 +1486,16 @@ static void obtain_inhibit_lock(void)
 		return;
 	}
 
-	if (!reply) {
-		DBG("BDS: No response");
+	if (!reply)
 		return;
-	}
 
 	if (dbus_message_iter_init(reply, &iter) == FALSE) {
-		DBG("BDS: Failed to create iterator");
 		dbus_message_unref(reply);
 		return;
 	}
 
-	DBG("BDS: we have an iterator");
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_UNIX_FD) {
 		dbus_message_unref(reply);
-		DBG("BDS: it's not an fd");
 		return;
 	}
 
@@ -1524,19 +1503,15 @@ static void obtain_inhibit_lock(void)
 	inhibit_lock = fd;
 
 	dbus_message_unref(reply);
-	DBG("BDS: Obtained inhibit lock: %d", fd);
 }
 
 static void release_inhibit_lock(void)
 {
-	DBG("BDS: %s(): start", __func__);
 	if (inhibit_lock < 0)
 		return;
 
-	DBG("BDS: Releasing inhibit lock");
 	close(inhibit_lock);
 	inhibit_lock = -1;
-	DBG("BDS: Released inhibit lock");
 }
 
 static gboolean prepare_for_sleep(DBusConnection *conn, DBusMessage *msg,
@@ -1545,20 +1520,16 @@ static gboolean prepare_for_sleep(DBusConnection *conn, DBusMessage *msg,
 	DBusMessageIter iter;
 	dbus_bool_t entering;
 
-	DBG("BDS: we have a dbus signal");
+	DBG("preparing for sleep or resume");
 
 	if (dbus_message_iter_init(msg, &iter) == FALSE)
 		return TRUE;
 
-	DBG("BDS: we have an iterator");
-	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BOOLEAN) {
-		DBG("BDS: it's not a boolean");
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BOOLEAN)
 		return TRUE;
-	}
 
 	dbus_message_iter_get_basic(&iter, &entering);
 
-	DBG("BDS: PrepareForSleep: %d\n", entering);
 	if (entering) {
 		adapter_suspend_discovery_sleep();
 		release_inhibit_lock();
@@ -1579,23 +1550,18 @@ int connect_login_manager(void)
 	if (!client_conn || !dbus_connection_get_is_connected(client_conn))
 		return -1;
 
-	DBG("BDS: dbus connected, look for login manager");
 	dbus_error_init(&error);
 	login_manager_exists = dbus_bus_name_has_owner(client_conn,
 						       "org.freedesktop.login1",
 						       &error);
 	if (dbus_error_is_set(&error)) {
-		DBG("BDS: no response looking for login manager");
 		dbus_error_free(&error);
 		return -1;
 	}
 
-	if (!login_manager_exists) {
-		DBG("BDS: No login manager");
+	if (!login_manager_exists)
 		return -1;
-	}
 
-	DBG("BDS: login manager exists");
 	return 0;
 }
 
@@ -1607,7 +1573,6 @@ int connect_prepare_for_sleep(void)
 
 	client_conn = btd_get_dbus_connection();
 
-	DBG("BDS: registering sleep watch");
 	sleep_id = g_dbus_add_signal_watch(client_conn,
 			"org.freedesktop.login1",
 			"/org/freedesktop/login1",
@@ -1617,12 +1582,11 @@ int connect_prepare_for_sleep(void)
 			NULL,
 			NULL);
 	if (!sleep_id) {
-		warn("Cannot watch for suspend events (selinux rule?)");
+		warn("Prohibited from watching suspend events.");
 		return -1;
 	}
 	prepare_sleep_id = sleep_id;
 
-	DBG("BDS: Sleep watch registered");
 	return 0;
 }
 
@@ -1642,30 +1606,19 @@ static DBusHandlerResult login_manager_changed(DBusConnection *client_conn,
 				DBUS_TYPE_STRING, &name,
 				DBUS_TYPE_STRING, &old_owner,
 				DBUS_TYPE_STRING, &new_owner,
-				DBUS_TYPE_INVALID)) {
-		DBG("BDS: Error getting OwnerChanged args");
+				DBUS_TYPE_INVALID))
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-	}
 
-	if (strcmp(name, "org.freedesktop.login1")) {
-		// Name not lost, just swapped owners
-		DBG("BDS: not interested in dbus: %s", name);
+	if (strcmp(name, "org.freedesktop.login1"))
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-	}
 
-	if (!strcmp(new_owner, "")) {
-		// Name not lost, just swapped owners
-		DBG("BDS: not a new owner: %s", name);
+	if (!strcmp(new_owner, ""))
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-	}
 
-	if (connect_prepare_for_sleep() < 0) {
-		DBG("BDS: still could not connect to login manager");
-	} else {
-		DBG("BDS: did connect sleep/suspend");
+	if (connect_prepare_for_sleep() >= 0)
 		dbus_connection_remove_filter(client_conn,
 					      login_manager_changed, NULL);
-	}
+
 	return DBUS_HANDLER_RESULT_HANDLED;
 }
 
@@ -1676,7 +1629,6 @@ int connect_login_and_prepare_for_sleep(void)
 	client_conn = btd_get_dbus_connection();
 
 	if (connect_login_manager() < 0) {
-		DBG("BDS: No login manager yet (early boot?)");
 		dbus_bus_add_match(client_conn,
 			"type='signal',"
 			"sender='org.freedesktop.DBus',"
@@ -1685,7 +1637,6 @@ int connect_login_and_prepare_for_sleep(void)
 			&error);
 
 		if (dbus_error_is_set(&error)) {
-			DBG("BDS: cannot add nameownerchanged");
 			dbus_error_free(&error);
 			return -1;
 		}
@@ -1702,14 +1653,12 @@ void disconnect_prepare_for_sleep(void)
 {
 	DBusConnection *conn = btd_get_dbus_connection();
 
-	DBG("BDS: %s(): start", __func__);
 	if (!conn || !dbus_connection_get_is_connected(conn))
 		return;
 
 	if (!prepare_sleep_id)
 		return;
 
-	DBG("BDS: removing watch()");
 	g_dbus_remove_watch(conn, prepare_sleep_id);
 	prepare_sleep_id = 0;
 }
@@ -1769,9 +1718,8 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	DBG("BDS: we have a dbus connection");
 	if (connect_login_and_prepare_for_sleep() < 0)
-		warn("BDS: Could not connect for sleep on startup");
+		info("Cannot listen for suspend yet, trying again later.");
 
 	if (btd_opts.experimental)
 		gdbus_flags = G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
@@ -1785,8 +1733,6 @@ int main(int argc, char *argv[])
 		error("Adapter handling initialization failed");
 		exit(1);
 	}
-
-	DBG("BDS: we have adapters");
 
 	btd_device_init();
 	btd_agent_init();
