@@ -1461,9 +1461,9 @@ static void obtain_inhibit_lock(void)
 		return;
 
 	message = dbus_message_new_method_call("org.freedesktop.login1",
-					       "/org/freedesktop/login1",
-					       "org.freedesktop.login1.Manager",
-					       "Inhibit");
+					"/org/freedesktop/login1",
+					"org.freedesktop.login1.Manager",
+					"Inhibit");
 	if (!message) {
 		dbus_connection_unref(client_conn);
 		return;
@@ -1476,12 +1476,12 @@ static void obtain_inhibit_lock(void)
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &mode);
 	dbus_error_init(&error);
 	reply = dbus_connection_send_with_reply_and_block(client_conn,
-							  message, -1, &error);
+							message, -1, &error);
 	dbus_message_unref(message);
 
 	if (dbus_error_is_set(&error)) {
 		warn("Failed to register a suspend inhibitor (selinux?): %s",
-		     error.message);
+			error.message);
 		dbus_error_free(&error);
 		return;
 	}
@@ -1552,8 +1552,8 @@ int connect_login_manager(void)
 
 	dbus_error_init(&error);
 	login_manager_exists = dbus_bus_name_has_owner(client_conn,
-						       "org.freedesktop.login1",
-						       &error);
+						"org.freedesktop.login1",
+						&error);
 	if (dbus_error_is_set(&error)) {
 		dbus_error_free(&error);
 		return -1;
@@ -1574,13 +1574,14 @@ int connect_prepare_for_sleep(void)
 	client_conn = btd_get_dbus_connection();
 
 	sleep_id = g_dbus_add_signal_watch(client_conn,
-			"org.freedesktop.login1",
-			"/org/freedesktop/login1",
-			"org.freedesktop.login1.Manager",
-			"PrepareForSleep",
-			prepare_for_sleep,
-			NULL,
-			NULL);
+					"org.freedesktop.login1",
+					"/org/freedesktop/login1",
+					"org.freedesktop.login1.Manager",
+					"PrepareForSleep",
+					prepare_for_sleep,
+					NULL,
+					NULL);
+
 	if (!sleep_id) {
 		warn("Prohibited from watching suspend events.");
 		return -1;
@@ -1603,10 +1604,10 @@ static DBusHandlerResult login_manager_changed(DBusConnection *client_conn,
 	}
 
 	if (!dbus_message_get_args(message, NULL,
-				DBUS_TYPE_STRING, &name,
-				DBUS_TYPE_STRING, &old_owner,
-				DBUS_TYPE_STRING, &new_owner,
-				DBUS_TYPE_INVALID))
+						DBUS_TYPE_STRING, &name,
+						DBUS_TYPE_STRING, &old_owner,
+						DBUS_TYPE_STRING, &new_owner,
+						DBUS_TYPE_INVALID))
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 
 	if (strcmp(name, "org.freedesktop.login1"))
@@ -1617,7 +1618,7 @@ static DBusHandlerResult login_manager_changed(DBusConnection *client_conn,
 
 	if (connect_prepare_for_sleep() >= 0)
 		dbus_connection_remove_filter(client_conn,
-					      login_manager_changed, NULL);
+						login_manager_changed, NULL);
 
 	return DBUS_HANDLER_RESULT_HANDLED;
 }
@@ -1630,19 +1631,19 @@ int connect_login_and_prepare_for_sleep(void)
 
 	if (connect_login_manager() < 0) {
 		dbus_bus_add_match(client_conn,
-			"type='signal',"
-			"sender='org.freedesktop.DBus',"
-			"interface='org.freedesktop.DBus',"
-			"member='NameOwnerChanged'",
-			&error);
+					"type='signal',"
+					"sender='org.freedesktop.DBus',"
+					"interface='org.freedesktop.DBus',"
+					"member='NameOwnerChanged'",
+					&error);
 
 		if (dbus_error_is_set(&error)) {
 			dbus_error_free(&error);
 			return -1;
 		}
 
-		dbus_connection_add_filter(client_conn,
-					   login_manager_changed, NULL, free);
+		dbus_connection_add_filter(client_conn, login_manager_changed,
+								NULL, free);
 		return -1;
 	}
 
